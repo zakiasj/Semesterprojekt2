@@ -4,6 +4,7 @@ import sqlite3
 import serial
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import threading
 import queue
 
@@ -20,8 +21,7 @@ class DatabaseManager:
     def create_tables(self):
         try:
             self.cursor.execute('''CREATE TABLE IF NOT EXISTS Patient (
-                        ID INTEGER PRIMARY KEY AUTOINCREMENT,
-                        CPR INTEGER UNIQUE,
+                        CPR INTEGER PRIMARY KEY,
                         Navn TEXT,
                         Alder INTEGER,
                         Sygdom TEXT
@@ -32,7 +32,7 @@ class DatabaseManager:
                         Person_id INTEGER,
                         ECGValue REAL,
                         TimeStamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY (Person_id) REFERENCES Patient(ID)
+                        FOREIGN KEY (Person_id) REFERENCES Patient(CPR)
                     )''')
             self.connection.commit()
         except sqlite3.Error as e:
@@ -50,7 +50,7 @@ class DatabaseManager:
 
     def get_person_id(self, cpr):
         try:
-            self.cursor.execute("SELECT ID FROM Patient WHERE CPR = ?", (cpr,))
+            self.cursor.execute("SELECT CPR FROM Patient WHERE CPR = ?", (cpr,))
             result = self.cursor.fetchone()
             if result:
                 return result[0]
@@ -88,32 +88,46 @@ class DatabaseManager:
         except sqlite3.Error as e:
             messagebox.showerror("Database Error", f"Error closing database connection: {e}")
 
+
+import tkinter as tk
+import serial
+import matplotlib.pyplot as plt
+import matplotlib.animation as animation
+from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+import threading
+import queue
+
+
 class ECGPlotter:
-    def __init__(self, port, baudrate, max_samples, db_manager, selected_cpr):
+    def __init__(self, parent, port, baudrate, max_samples, db_manager, selected_cpr):
+        self.parent = parent
         self.port = port
         self.baudrate = baudrate
         self.max_samples = max_samples
         self.data_queue = queue.Queue()
         self.ys = [0] * max_samples
         self.selected_cpr = selected_cpr
+        self.db_manager = db_manager
+        self.current_bpm = 0
+
         self.fig, self.ax = plt.subplots(figsize=(10, 6))
         self.xs = list(range(max_samples))
         self.line, = self.ax.plot(self.xs, self.ys)
         self.ax.set_ylim(0, 1023)
+        self.ax.set_title('Simulated ECG Data')
         self.ax.set_xlabel('Samples')
-        self.ax.set_ylabel('EKG Værdier')
+        self.ax.set_ylabel('ECG Value')
 
-        self.current_bpm = 0
-        self.title_text = 'EKG Data'
-        self.title = self.ax.set_title(f'{self.title_text} | Current BPM: {self.current_bpm:.2f}')
+        self.text_bpm = self.ax.text(0.85, 0.95, '', transform=self.ax.transAxes, fontsize=14,
+                                     verticalalignment='top')
 
-        self.db_manager = db_manager
+        self.canvas = FigureCanvasTkAgg(self.fig, master=self.parent)
+        self.canvas.get_tk_widget().pack(side=tk.TOP, fill=tk.BOTH, expand=True)
 
-        self.ani = animation.FuncAnimation(self.fig, self.update_plot, interval=1000/60)  # 60 FPS
-
-    def start_serial_thread(self):
         self.serial_thread = threading.Thread(target=self.serial_reader, daemon=True)
         self.serial_thread.start()
+
+        self.ani = animation.FuncAnimation(self.fig, self.update_plot, interval=1000 / 60)  # 60 FPS
 
     def serial_reader(self):
         try:
@@ -139,30 +153,35 @@ class ECGPlotter:
             if self.selected_cpr:
                 self.db_manager.insert_ekg_measurement(self.selected_cpr, ecg_value)
 
+        # Update BPM calculation
+        self.update_bpm()
+
         self.line.set_ydata(self.ys)
+        self.text_bpm.set_text(f'Current BPM: {int(self.current_bpm)}')
+        self.canvas.draw()
+        return self.line, self.text_bpm
 
-        # Calculate and display BPM
-        self.current_bpm = self.calculate_bpm(self.ys)
-        self.title.set_text(f'{self.title_text} | Current BPM: {int(self.current_bpm)}')
-
-        return self.line, self.title
-
-    def calculate_bpm(self, data):
-        fs = 300  # Sampling frequency in Hz
-        threshold = 700  # Example threshold for detecting peaks, adjust as needed
-
-        peaks = self.detect_peaks(data, threshold)
+    def update_bpm(self):
+        # Find peaks (R-waves) by simple thresholding
+        peaks = self.detect_peaks(self.ys, threshold=700)  # Adjust threshold as needed
+        fs = 200
+        # Calculate time intervals between consecutive peaks
         time_intervals = []
         for i in range(1, len(peaks)):
-            time_interval = (peaks[i] - peaks[i - 1]) / fs
+            time_interval = (peaks[i] - peaks[i - 1]) / fs  # Assuming fs = 200 Hz
             time_intervals.append(time_interval)
 
+        # Calculate average time interval
         if time_intervals:
             avg_time_interval = sum(time_intervals) / len(time_intervals)
+            # Calculate BPM (beats per minute)
             if avg_time_interval > 0:
-                bpm = 60 / avg_time_interval
-                return bpm
-        return 0
+                self.current_bpm = 60 / avg_time_interval
+                print(f"Average BPM: {self.current_bpm:.2f}")
+            else:
+                print("Cannot calculate BPM: No valid R-waves found in the last plot.")
+        else:
+            print("No R-waves found in the last plot.")
 
     def detect_peaks(self, data, threshold):
         peaks = []
@@ -170,9 +189,6 @@ class ECGPlotter:
             if data[i] > threshold and data[i] > data[i - 1] and data[i] > data[i + 1]:
                 peaks.append(i)
         return peaks
-
-    def show_plot(self):
-        plt.show()
 
 
 class EKG_GUI:
@@ -263,7 +279,8 @@ class EKG_GUI:
         self.entry_sygdom = tk.Entry(self.popup_window)
         self.entry_sygdom.grid(row=3, column=1, padx=5, pady=5)
 
-        tk.Button(self.popup_window, text="Gem Patient", command=self.save_patient).grid(row=4, columnspan=2, padx=10, pady=10)
+        tk.Button(self.popup_window, text="Gem Patient", command=self.save_patient).grid(row=4, columnspan=2, padx=10,
+                                                                                         pady=10)
 
     def save_patient(self):
         navn = self.entry_navn.get()
@@ -315,7 +332,8 @@ class EKG_GUI:
         cpr_list = [str(patient[0]) for patient in patients]
         self.cpr_combobox['values'] = cpr_list
 
-        tk.Button(self.popup_window, text="Vis EKG", command=self.start_ecg_plot).grid(row=1, columnspan=2, padx=10, pady=10)
+        tk.Button(self.popup_window, text="Vis EKG", command=self.start_ecg_plot).grid(row=1, columnspan=2, padx=10,
+                                                                                       pady=10)
 
     def start_ecg_plot(self):
         selected_cpr = self.cpr_combobox.get()
@@ -326,11 +344,11 @@ class EKG_GUI:
         port = '/dev/tty.usbmodem1101'  # Adjust this according to your serial port
         baudrate = 9600
         max_samples = 500
-        self.ecg_plotter = ECGPlotter(port, baudrate, max_samples, self.db_manager, selected_cpr)
-        self.ecg_plotter.start_serial_thread()
-        self.ecg_plotter.show_plot()
 
+        plot_frame = tk.Frame(self.popup_window)
+        plot_frame.grid(row=2, columnspan=2, padx=10, pady=10, sticky='nsew')
 
+        self.ecg_plotter = ECGPlotter(plot_frame, port, baudrate, max_samples, self.db_manager, selected_cpr)
 
 
 if __name__ == "__main__":
