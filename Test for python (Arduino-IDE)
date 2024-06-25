@@ -1,0 +1,19 @@
+# Test til python programmet, om den modtager data via seriel forbindelse:
+
+void setup() {
+ Serial.begin(9600); // Start seriel kommunikation med 9600 baud rate
+}
+
+
+void loop() {
+ // Generer savtakke med et hurtigt stigende og langsomt faldende mønster
+ for (int i = 0; i < 500; i += 8) { // Hurtig øget værdi
+   Serial.println(i);
+   delay(10); // Juster forsinkelsen efter behov
+ }
+ for (int i = 500; i > 0; i -= 8) { // Hurtig fald hurtigt
+   Serial.println(i);
+   delay(10); // Juster forsinkelsen efter behov
+ }
+}
+// Afstandene mellem savtakkene gøres mindre og mere spids.
