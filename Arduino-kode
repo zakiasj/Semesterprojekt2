@@ -1,0 +1,42 @@
+
+Bilag 5: Arduino kode til patientsimualtor
+
+#include <SPI.h>
+#include <TimerOne.h>
+
+
+const int CSPin = 10; // Definerer Arduino pin 10 som CS (Control Select)
+const unsigned long samplingTime = 1000; // Samplingstid i mikrosekunder
+
+
+SPISettings settings(8000000, MSBFIRST, SPI_MODE0);
+
+
+void setup() {
+   Serial.begin(9600); // Starter den serielle kommunikation
+   SPI.begin(); // Starter SPI-forbindelsen
+   SPI.beginTransaction(settings); // Starter SPI overførsel med de angivet indstillinger
+   pinMode(CSPin, OUTPUT); // Sætter CS-pin som output
+   digitalWrite(CSPin, HIGH); // Sætter CS-pin høj som standard
+   Timer1.initialize(samplingTime); // Initialiserer TimerOne med samplingstiden
+   Timer1.attachInterrupt(measureAndSend); // Vedhæfter interrupt-funktionen
+}
+
+
+int getEKGADC() {
+   digitalWrite(CSPin, LOW); // Starter SPI overførsel
+   int adcValue = SPI.transfer16(0x00); // Gennemfører SPI overførsel
+   digitalWrite(CSPin, HIGH); // Stopper SPI overførsel
+   return adcValue; // Returnerer ADC-værdi som integer
+}
+
+
+void measureAndSend() {
+   int value = getEKGADC(); // Henter ADC-værdi
+   Serial.println(value); // Sender værdien via serielt interface
+}
+
+
+void loop() {
+   // Skal være tom, da vi bruger TimerOne til at generere interrupts
+}
